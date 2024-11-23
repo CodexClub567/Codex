@@ -1,22 +1,29 @@
 {
   "name": "codexclub567/ai-generative-tools",
-  "description": "A WordPress website focused on AI generative tools, plugins, and customizations.",
+  "description": "A WordPress website for AI generative tools, custom plugins, and themes. Managed by Codex Creative Studio.",
   "type": "project",
+  "authors": [
+    {
+      "name": "Codex Creative Studio",
+      "email": "codexcreativestudio@gmail.com",
+      "homepage": "https://codexcreativestudio.com"
+    }
+  ],
   "require": {
     "php": ">=7.4",                           // Minimum PHP version required
     "composer/installers": "^1.11",          // Required for WordPress custom plugin/theme handling
-    "vlucas/phpdotenv": "^5.5",              // To manage environment variables
-    "openai/openai-php": "^3.0",             // OpenAI PHP SDK for AI tools
+    "vlucas/phpdotenv": "^5.5",              // To manage environment variables securely
+    "openai/openai-php": "^3.0",             // OpenAI PHP SDK for AI generative tools
     "monolog/monolog": "^2.8"                // Logging library for debugging and analytics
   },
   "require-dev": {
-    "phpunit/phpunit": "^9.5",               // Testing framework for your custom code
-    "squizlabs/php_codesniffer": "^3.7"      // For code quality checks
+    "phpunit/phpunit": "^9.5",               // Testing framework for your custom PHP code
+    "squizlabs/php_codesniffer": "^3.7"      // Ensures code adheres to PHP standards (e.g., PSR-12)
   },
   "autoload": {
     "psr-4": {
       "Codex\\AI\\": "wp-content/plugins/ai-tools/includes/",  // Namespace for your AI plugin
-      "Codex\\Theme\\": "wp-content/themes/codex-theme/inc/"   // Namespace for your theme utilities
+      "Codex\\Theme\\": "wp-content/themes/codex-theme/inc/"   // Namespace for your custom theme utilities
     }
   },
   "autoload-dev": {
@@ -34,15 +41,15 @@
   },
   "extra": {
     "installer-paths": {
-      "wp-content/plugins/{$name}/": ["type:wordpress-plugin"],  // Install plugins in the proper directory
-      "wp-content/themes/{$name}/": ["type:wordpress-theme"]    // Install themes in the proper directory
+      "wp-content/plugins/{$name}/": ["type:wordpress-plugin"],  // Install plugins in the correct directory
+      "wp-content/themes/{$name}/": ["type:wordpress-theme"]    // Install themes in the correct directory
     }
   },
   "config": {
     "optimize-autoloader": true,             // Optimize autoloader for performance
-    "preferred-install": "dist",            // Download distributions when available
-    "sort-packages": true                   // Sort packages in composer.json for better readability
+    "preferred-install": "dist",            // Download distributions instead of source
+    "sort-packages": true                   // Keep composer.json organized
   },
-  "minimum-stability": "stable",             // Allow only stable packages
-  "prefer-stable": true                      // Prefer stable versions of dependencies
+  "minimum-stability": "stable",             // Ensure only stable packages are used
+  "prefer-stable": true                      // Prefer stable versions when possible
 }

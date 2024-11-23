@@ -1,0 +1,110 @@
+# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress
+
+# ------------------------------------------------------
+# SECURITY SETTINGS
+# ------------------------------------------------------
+
+# Disable directory browsing
+Options -Indexes
+
+# Block access to sensitive files
+<FilesMatch "(\.htaccess|\.htpasswd|\.env|wp-config\.php|xmlrpc\.php|error_log|php_error_log|readme\.html|license\.txt)">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Protect wp-content
+<Directory "/wp-content/">
+    Order Allow,Deny
+    Allow from all
+    <FilesMatch "\.(php|php[3-8]?|phtml)$">
+        Deny from all
+    </FilesMatch>
+</Directory>
+
+# Restrict access to wp-includes
+<IfModule mod_rewrite.c>
+    RewriteRule ^wp-admin/includes/ - [F,L]
+    RewriteRule !^wp-includes/ - [S=3]
+    RewriteRule ^wp-includes/[^/]+\.php$ - [F,L]
+    RewriteRule ^wp-includes/js/tinymce/langs/.+\.php - [F,L]
+    RewriteRule ^wp-includes/theme-compat/ - [F,L]
+</IfModule>
+
+# Disable XML-RPC (if not used for remote access)
+<Files xmlrpc.php>
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Block malicious bots and spam
+<IfModule mod_setenvif.c>
+    SetEnvIfNoCase User-Agent "libwww-perl" bad_bot
+    SetEnvIfNoCase User-Agent "HTTrack" bad_bot
+    SetEnvIfNoCase User-Agent "wget" bad_bot
+    <Limit GET POST>
+        Order Allow,Deny
+        Allow from all
+        Deny from env=bad_bot
+    </Limit>
+</IfModule>
+
+# ------------------------------------------------------
+# PERFORMANCE SETTINGS
+# ------------------------------------------------------
+
+# Enable Gzip compression
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/plain text/html text/xml text/css application/xml application/xhtml+xml application/javascript application/x-javascript text/javascript image/svg+xml
+</IfModule>
+
+# Leverage browser caching
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/html "access plus 1 hour"
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType text/javascript "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+    ExpiresByType image/gif "access plus 1 year"
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType image/svg+xml "access plus 1 year"
+    ExpiresByType video/mp4 "access plus 1 year"
+    ExpiresByType video/webm "access plus 1 year"
+    ExpiresByType application/pdf "access plus 1 month"
+    ExpiresByType application/x-shockwave-flash "access plus 1 month"
+</IfModule>
+
+# Cache-Control headers
+<IfModule mod_headers.c>
+    <FilesMatch "\.(ico|jpe?g|png|gif|swf|svg|webp|woff|woff2|ttf|otf|eot|js|css|pdf)$">
+        Header set Cache-Control "max-age=31536000, public"
+    </FilesMatch>
+</IfModule>
+
+# ------------------------------------------------------
+# CUSTOM REDIRECTS (for AI tools and resources)
+# ------------------------------------------------------
+
+# Redirect AI tools (if using custom paths)
+RewriteRule ^ai-tools/(.*)$ /wp-content/plugins/ai-tools/$1 [L]
+RewriteRule ^ai-resources/(.*)$ /wp-content/uploads/ai-resources/$1 [L]
+
+# ------------------------------------------------------
+# ERROR HANDLING
+# ------------------------------------------------------
+
+# Custom error pages
+ErrorDocument 400 /custom-error-pages/400.html
+ErrorDocument 403 /custom-error-pages/403.html
+ErrorDocument 404 /custom-error-pages/404.html
+ErrorDocument 500 /custom-error-pages/500.html

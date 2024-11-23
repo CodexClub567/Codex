@@ -1,0 +1,48 @@
+{
+  "name": "codexclub567/ai-generative-tools",
+  "description": "A WordPress website focused on AI generative tools, plugins, and customizations.",
+  "type": "project",
+  "require": {
+    "php": ">=7.4",                           // Minimum PHP version required
+    "composer/installers": "^1.11",          // Required for WordPress custom plugin/theme handling
+    "vlucas/phpdotenv": "^5.5",              // To manage environment variables
+    "openai/openai-php": "^3.0",             // OpenAI PHP SDK for AI tools
+    "monolog/monolog": "^2.8"                // Logging library for debugging and analytics
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^9.5",               // Testing framework for your custom code
+    "squizlabs/php_codesniffer": "^3.7"      // For code quality checks
+  },
+  "autoload": {
+    "psr-4": {
+      "Codex\\AI\\": "wp-content/plugins/ai-tools/includes/",  // Namespace for your AI plugin
+      "Codex\\Theme\\": "wp-content/themes/codex-theme/inc/"   // Namespace for your theme utilities
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Codex\\Tests\\": "tests/"             // Namespace for test cases
+    }
+  },
+  "scripts": {
+    "post-install-cmd": [
+      "Codex\\AI\\Installer::setupEnvironment"
+    ],
+    "post-update-cmd": [
+      "Codex\\AI\\Installer::updateEnvironment"
+    ]
+  },
+  "extra": {
+    "installer-paths": {
+      "wp-content/plugins/{$name}/": ["type:wordpress-plugin"],  // Install plugins in the proper directory
+      "wp-content/themes/{$name}/": ["type:wordpress-theme"]    // Install themes in the proper directory
+    }
+  },
+  "config": {
+    "optimize-autoloader": true,             // Optimize autoloader for performance
+    "preferred-install": "dist",            // Download distributions when available
+    "sort-packages": true                   // Sort packages in composer.json for better readability
+  },
+  "minimum-stability": "stable",             // Allow only stable packages
+  "prefer-stable": true                      // Prefer stable versions of dependencies
+}

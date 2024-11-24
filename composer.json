@@ -10,25 +10,25 @@
     }
   ],
   "require": {
-    "php": ">=7.4",                           // Minimum PHP version required
-    "composer/installers": "^1.11",          // Required for WordPress custom plugin/theme handling
-    "vlucas/phpdotenv": "^5.5",              // To manage environment variables securely
-    "openai/openai-php": "^3.0",             // OpenAI PHP SDK for AI generative tools
-    "monolog/monolog": "^2.8"                // Logging library for debugging and analytics
+    "php": ">=7.4",                        
+    "composer/installers": "^1.11",         
+    "vlucas/phpdotenv": "^5.5",             
+    "openai/openai-php": "^3.0",             
+    "monolog/monolog": "^2.8"                
   },
   "require-dev": {
-    "phpunit/phpunit": "^9.5",               // Testing framework for your custom PHP code
-    "squizlabs/php_codesniffer": "^3.7"      // Ensures code adheres to PHP standards (e.g., PSR-12)
+    "phpunit/phpunit": "^9.5",              
+    "squizlabs/php_codesniffer": "^3.7"      
   },
   "autoload": {
     "psr-4": {
-      "Codex\\AI\\": "wp-content/plugins/ai-tools/includes/",  // Namespace for your AI plugin
-      "Codex\\Theme\\": "wp-content/themes/codex-theme/inc/"   // Namespace for your custom theme utilities
+      "Codex\\AI\\": "wp-content/plugins/ai-tools/includes/",  
+      "Codex\\Theme\\": "wp-content/themes/codex-theme/inc/"  
     }
   },
   "autoload-dev": {
     "psr-4": {
-      "Codex\\Tests\\": "tests/"             // Namespace for test cases
+      "Codex\\Tests\\": "tests/"        
     }
   },
   "scripts": {
@@ -41,15 +41,15 @@
   },
   "extra": {
     "installer-paths": {
-      "wp-content/plugins/{$name}/": ["type:wordpress-plugin"],  // Install plugins in the correct directory
-      "wp-content/themes/{$name}/": ["type:wordpress-theme"]    // Install themes in the correct directory
+      "wp-content/plugins/{$name}/": ["type:wordpress-plugin"], 
+      "wp-content/themes/{$name}/": ["type:wordpress-theme"]   
     }
   },
   "config": {
-    "optimize-autoloader": true,             // Optimize autoloader for performance
-    "preferred-install": "dist",            // Download distributions instead of source
-    "sort-packages": true                   // Keep composer.json organized
+    "optimize-autoloader": true,          
+    "preferred-install": "dist",          
+    "sort-packages": true                
   },
-  "minimum-stability": "stable",             // Ensure only stable packages are used
-  "prefer-stable": true                      // Prefer stable versions when possible
+  "minimum-stability": "stable",           
+  "prefer-stable": true                    
 }

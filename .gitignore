@@ -42,7 +42,7 @@ wp-content/uploads/
 
 # Ignore caching files and backup plugins.
 wp-content/cache/
-wp-content/backup-*.zip
+wp-content/backup- .zip
 wp-content/advanced-cache.php
 wp-content/wp-cache-config.php
 

@@ -1,235 +1,300 @@
 <?php
-// In your theme’s functions.php
+/**
+ * OML Studio – functions.php
+ * Production-ready pipeline for generating luxury scripts + voiceovers.
+ */
 
-if ( ! defined( 'ABSPATH' ) ) exit;
+// Bail if accessed directly
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+add_action( 'init',           'oml_register_cpt'         );
+add_action( 'rest_api_init',  'oml_register_rest_routes' );
+
+// 1) Register Custom Post Type to track productions
+function oml_register_cpt() {
+    register_post_type( 'oml_production', [
+        'labels' => [
+            'name'          => 'OML Productions',
+            'singular_name' => 'OML Production',
+        ],
+        'public'      => false,
+        'show_ui'     => true,
+        'supports'    => [ 'title' ],
+        'capability_type' => 'post',
+        'map_meta_cap'    => true,
+    ]);
+}
+
+// 2) Expose REST endpoints to kick off a new production & fetch status
+function oml_register_rest_routes() {
+    register_rest_route( 'oml/v1', '/production', [
+        'methods'             => 'POST',
+        'callback'            => 'oml_rest_create_production',
+        'permission_callback' => function() {
+            return current_user_can( 'edit_posts' );
+        }
+    ] );
+    register_rest_route( 'oml/v1', '/production/(?P<id>\d+)', [
+        'methods'             => 'GET',
+        'callback'            => 'oml_rest_get_production',
+        'permission_callback' => '__return_true',
+    ] );
+}
 
 /**
- * 1) Register REST routes for each pipeline step.
+ * 2a) Create a new production job
  */
-add_action('rest_api_init', function() {
-    register_rest_route('oml/v1','/generate-script', [
-        'methods'             => 'POST',
-        'callback'            => 'oml_generate_script',
-        'permission_callback' => '__return_true',
-    ]);
-    register_rest_route('oml/v1','/fact-check', [
-        'methods'             => 'POST',
-        'callback'            => 'oml_fact_check_script',
-        'permission_callback' => '__return_true',
-    ]);
-    register_rest_route('oml/v1','/generate-voice', [
-        'methods'             => 'POST',
-        'callback'            => 'oml_generate_voiceovers',
-        'permission_callback' => '__return_true',
-    ]);
-    register_rest_route('oml/v1','/merge-audio', [
-        'methods'             => 'POST',
-        'callback'            => 'oml_merge_audio',
-        'permission_callback' => '__return_true',
-    ]);
-});
+function oml_rest_create_production( WP_REST_Request $req ) {
+    $family = sanitize_text_field( $req->get_param( 'family_name' ) );
+    $facts  = array_map( 'sanitize_text_field', (array) $req->get_param( 'facts' ) );
+
+    if ( empty( $family ) || empty( $facts ) ) {
+        return new WP_Error( 'oml_invalid_input', 'Family name and facts are required.', [ 'status' => 400 ] );
+    }
+
+    // Create CPT entry
+    $post_id = wp_insert_post( [
+        'post_type'   => 'oml_production',
+        'post_title'  => $family,
+        'post_status' => 'publish',
+    ] );
+    if ( is_wp_error( $post_id ) ) {
+        return new WP_Error( 'oml_post_failed', 'Could not create production.', [ 'status' => 500 ] );
+    }
+
+    update_post_meta( $post_id, 'oml_family', $family );
+    update_post_meta( $post_id, 'oml_facts', $facts );
+    update_post_meta( $post_id, 'oml_status', 'queued_script' );
+
+    // Schedule background job for script generation
+    as_schedule_single_action( time(), 'oml_do_generate_script', [ 'post_id' => $post_id ] );
+
+    return rest_ensure_response( [
+        'id'     => $post_id,
+        'status' => 'queued_script',
+        'message'=> 'Script generation queued.',
+    ] );
+}
 
 /**
- * 2) 5-Chapter Script Generator via OpenAI
+ * 2b) Fetch status & links for a production
  */
-function oml_generate_script( WP_REST_Request $req ) {
-    $family = sanitize_text_field( $req->get_param('family_name') );
-    $facts  = $req->get_param('facts'); // an array of key facts
+function oml_rest_get_production( WP_REST_Request $req ) {
+    $id = absint( $req->get_param( 'id' ) );
+    $post = get_post( $id );
+    if ( ! $post || $post->post_type !== 'oml_production' ) {
+        return new WP_Error( 'oml_not_found', 'Production not found.', [ 'status' => 404 ] );
+    }
 
-    $prompt = "Write a luxury storytelling 5-chapter article about the {$family} family, 
-    chapter length ~490 words, chapter1 Piers Morgan style witty drama, chapters2–5 in Caro style.\n\nFacts:\n" 
-    . implode("\n", $facts);
+    $meta = [
+        'family'       => get_post_meta( $id, 'oml_family', true ),
+        'status'       => get_post_meta( $id, 'oml_status', true ),
+        'script'       => get_post_meta( $id, 'oml_script', true ),
+        'checked'      => get_post_meta( $id, 'oml_checked_script', true ),
+        'voice_files'  => get_post_meta( $id, 'oml_voice_files', true ),
+        'final_audio'  => get_post_meta( $id, 'oml_final_audio', true ),
+        'attachment'   => get_post_meta( $id, 'oml_final_attachment', true ),
+    ];
+    return rest_ensure_response( [ 'id' => $id, 'data' => $meta ] );
+}
+
+/*
+|--------------------------------------------------------------------------
+| Action Scheduler hooks
+|--------------------------------------------------------------------------
+|
+| 3) Generate script -> 4) Fact­check -> 5) Voice -> 6) Merge audio
+|
+*/
+
+// 3) Generate 5-chapter script via OpenAI
+add_action( 'oml_do_generate_script', function( $args ) {
+    $post_id = intval( $args['post_id'] );
+    $family  = get_post_meta( $post_id, 'oml_family', true );
+    $facts   = get_post_meta( $post_id, 'oml_facts', true );
+
+    $prompt = sprintf(
+        "Write a formal, 5-chapter luxury storytelling piece (~490-495 words each). "
+      . "Chapter 1 in witty, dramatic Piers Morgan style; Chapters 2-5 in deep, narrative Robert A. Caro style. "
+      . "Facts:\n%s",
+      implode( "\n", $facts )
+    );
 
     $body = [
-        "model"    => "gpt-4.5-turbo",
-        "messages" => [ [ "role"=>"system","content"=>"You are a luxury historian." ],
-                        [ "role"=>"user","content"=>$prompt ] ],
-        "max_tokens" => 3000
+        'model'    => 'gpt-4.5-turbo',
+        'messages' => [
+            [ 'role'=>'system', 'content'=>'You are a luxury historian etching opulent narratives.' ],
+            [ 'role'=>'user',   'content'=>$prompt ],
+        ],
+        'max_tokens' => 3000,
     ];
+    $openai = oml_call_openai( $body );
+    $script = $openai['choices'][0]['message']['content'] ?? '';
 
-    $response = oml_call_openai( $body );
-    if ( ! isset($response['choices'][0]['message']['content']) ) {
-        return new WP_Error('openai_failed','OpenAI did not return text', ['status'=>500]);
+    if ( empty( $script ) ) {
+        update_post_meta( $post_id, 'oml_status', 'error_script' );
+        return;
     }
 
-    $script = $response['choices'][0]['message']['content'];
-    // Store transient for later steps
-    set_transient("oml_script_{$family}", $script, 12*HOUR_IN_SECONDS);
+    update_post_meta( $post_id, 'oml_script', $script );
+    update_post_meta( $post_id, 'oml_status', 'queued_factcheck' );
 
-    return rest_ensure_response([
-        'success' => true,
-        'script'  => $script,
-    ]);
-}
+    // Next step
+    as_schedule_single_action( time() + 5, 'oml_do_fact_check', [ 'post_id' => $post_id ] );
+});
 
-/**
- * 3) Fact-check the generated script via Perplexity
- */
-function oml_fact_check_script( WP_REST_Request $req ) {
-    $family = sanitize_text_field( $req->get_param('family_name') );
-    $script = get_transient("oml_script_{$family}");
+// 4) Fact-check via Perplexity
+add_action( 'oml_do_fact_check', function( $args ) {
+    $post_id = intval( $args['post_id'] );
+    $script  = get_post_meta( $post_id, 'oml_script', true );
     if ( ! $script ) {
-        return new WP_Error('no_script','No script found – run /generate-script first', ['status'=>400]);
+        update_post_meta( $post_id, 'oml_status', 'error_no_script' );
+        return;
     }
 
-    // call Perplexity
-    $key = getenv('PERPLEXITY_API_KEY');
-    $url = "https://api.perplexity.ai/factcheck";
-    $data = oml_call_api($url, 'POST', ["Authorization"=>"Bearer {$key}","Content-Type"=>"application/json"], [
-        'text'    => $script,
-        'verbose' => true,
-    ]);
+    $perp_key = getenv( 'PERPLEXITY_API_KEY' );
+    $resp = oml_call_api(
+        'https://api.perplexity.ai/factcheck',
+        'POST',
+        [ 'Authorization'=>"Bearer {$perp_key}", 'Content-Type'=>'application/json' ],
+        [ 'text'=>$script, 'verbose'=>false ]
+    );
+    $checked = $resp['checkedText'] ?? '';
 
-    if ( empty($data['checkedText']) ) {
-        return new WP_Error('factcheck_failed','Perplexity failed to return checked text', ['status'=>500]);
+    if ( empty( $checked ) ) {
+        update_post_meta( $post_id, 'oml_status', 'error_factcheck' );
+        return;
     }
 
-    $checked = $data['checkedText'];
-    set_transient("oml_checked_{$family}", $checked, 12*HOUR_IN_SECONDS);
+    update_post_meta( $post_id, 'oml_checked_script', $checked );
+    update_post_meta( $post_id, 'oml_status', 'queued_voice' );
 
-    return rest_ensure_response([
-        'success'      => true,
-        'checked_text' => $checked,
-        'issues'       => $data['issues'],  // array of flagged issues
-    ]);
-}
+    as_schedule_single_action( time()+5, 'oml_do_generate_voice', [ 'post_id'=>$post_id ] );
+});
 
-/**
- * 4) Generate individual voiceovers via ElevenLabs
- */
-function oml_generate_voiceovers( WP_REST_Request $req ) {
-    $family   = sanitize_text_field( $req->get_param('family_name') );
-    $script   = get_transient("oml_checked_{$family}");
-    if ( ! $script ) {
-        return new WP_Error('no_checked','No checked script – run /fact-check first', ['status'=>400]);
+// 5) ElevenLabs TTS for each chapter
+add_action( 'oml_do_generate_voice', function( $args ) {
+    $post_id = intval( $args['post_id'] );
+    $checked = get_post_meta( $post_id, 'oml_checked_script', true );
+    if ( ! $checked ) {
+        update_post_meta( $post_id, 'oml_status', 'error_no_checked' );
+        return;
     }
 
-    // Split chapters by delimiter (assuming “Chapter 1:” etc.)
-    preg_match_all('/Chapter\s+\d+:(.*?)(?=Chapter\s+\d+:|$)/is', $script, $m);
-    $chapters = $m[0];
-
-    $api_key  = getenv('ELEVENLABS_API_KEY');
-    $voiceA   = 'voice-model-a'; // typo keys from ElevenLabs console
-    $voiceB   = 'voice-model-b';
+    // split on “Chapter 1: … Chapter 2: …”
+    preg_match_all( '/(Chapter\s+\d+:.*?)(?=Chapter\s+\d+:|$)/is', $checked, $m );
+    $chapters = $m[1] ?? [];
+    if ( count( $chapters ) !== 5 ) {
+        update_post_meta( $post_id, 'oml_status', 'error_split' );
+        return;
+    }
 
     $upload_dir = wp_upload_dir();
-    $folder     = trailingslashit($upload_dir['basedir']) . "oml-{$family}";
-    wp_mkdir_p( $folder );
+    $dir        = $upload_dir['basedir'] . "/oml-{$post_id}";
+    wp_mkdir_p( $dir );
 
-    $files = [];
-    foreach( $chapters as $i => $text ) {
-        $model = ($i===0) ? $voiceA : $voiceB;
-        $res   = oml_call_api(
-            "https://api.elevenlabs.io/v1/tts/{$model}/stream",
-            'POST', 
-            [
-                "xi-api-key" => $api_key,
-                "Content-Type" => "application/json"
-            ],
-            ["text"=>$text]
+    $eleven_key = getenv( 'ELEVENLABS_API_KEY' );
+    $voiceA = '21m00Tcm4TlvDq8ikWAM'; // example ElevenLabs voice ID for witty style
+    $voiceB = 'AZnzlk1XvdvUeBnXmlld'; // deep, reflective voice ID
+
+    $mp3s = [];
+    foreach ( $chapters as $i => $text ) {
+        $voice = $i === 0 ? $voiceA : $voiceB;
+        $resp = oml_call_api(
+            "https://api.elevenlabs.io/v1/text-to-speech/{$voice}/stream",
+            'POST',
+            [ 'xi-api-key'=>$eleven_key, 'Content-Type'=>'application/json' ],
+            [ 'text'=>$text ]
         );
-        // $res is raw MP3 binary
-        $filename = "{$folder}/ch" . ($i+1) . ".mp3";
-        file_put_contents( $filename, $res );
-        $files[] = $filename;
+        $path = "{$dir}/chapter-" . ($i+1) . ".mp3";
+        file_put_contents( $path, $resp );
+        $mp3s[] = $path;
     }
 
-    // store list of files
-    set_transient("oml_voicefiles_{$family}", $files, 12*HOUR_IN_SECONDS);
+    update_post_meta( $post_id, 'oml_voice_files', $mp3s );
+    update_post_meta( $post_id, 'oml_status', 'queued_merge' );
 
-    return rest_ensure_response([
-        'success' => true,
-        'files'   => $files,
-    ]);
-}
+    as_schedule_single_action( time()+5, 'oml_do_merge_audio', [ 'post_id'=>$post_id ] );
+});
 
-/**
- * 5) Merge the MP3s into one final file via ffmpeg
- */
-function oml_merge_audio( WP_REST_Request $req ) {
-    $family = sanitize_text_field( $req->get_param('family_name') );
-    $files  = get_transient("oml_voicefiles_{$family}");
-    if ( empty($files) ) {
-        return new WP_Error('no_audio','No chapter audio – run /generate-voice first', ['status'=>400]);
+// 6) Merge via ffmpeg + register in Media Library
+add_action( 'oml_do_merge_audio', function( $args ) {
+    $post_id = intval( $args['post_id'] );
+    $files   = get_post_meta( $post_id, 'oml_voice_files', true );
+    if ( empty( $files ) ) {
+        update_post_meta( $post_id, 'oml_status', 'error_no_voices' );
+        return;
     }
 
-    $upload_dir = wp_upload_dir();
-    $out_dir    = trailingslashit($upload_dir['basedir']) . "oml-{$family}";
-    $out_file   = "{$out_dir}/{$family}_OML_Final_Voiceover.mp3";
+    $upload = wp_upload_dir();
+    $dir    = $upload['basedir'] . "/oml-{$post_id}";
+    $out    = "{$dir}/{$post_id}_OML_Final_Voiceover.mp3";
 
-    // create a ffmpeg concat file
-    $concat = "{$out_dir}/concat.txt";
-    $lines  = array_map(function($f){ return "file '" . str_replace("'", "'\\''", $f) . "'"; }, $files);
-    file_put_contents( $concat, implode("\n", $lines) );
+    // build concat list
+    $txt = "{$dir}/concat.txt";
+    $lines = array_map( fn($f)=> "file '{$f}'", $files );
+    file_put_contents( $txt, implode( "\n", $lines ) );
 
-    // system call ffmpeg
-    $cmd = "ffmpeg -y -f concat -safe 0 -i " . escapeshellarg($concat) 
-         . " -c copy " . escapeshellarg($out_file);
-    shell_exec($cmd);
+    $cmd = "ffmpeg -y -f concat -safe 0 -i " . escapeshellarg( $txt ) 
+         . " -c copy " . escapeshellarg( $out );
+    shell_exec( $cmd );
 
-    if ( ! file_exists($out_file) ) {
-        return new WP_Error('merge_failed','ffmpeg failed to produce output', ['status'=>500]);
+    if ( ! file_exists( $out ) ) {
+        update_post_meta( $post_id, 'oml_status', 'error_merge' );
+        return;
     }
 
-    // Register with Media Library
-    $attachment_id = oml_register_media($out_file, "{$family}_OML_Final_Voiceover.mp3", 'audio/mpeg');
+    // register in media library
+    $attach_id = oml_register_media( $out );
+    update_post_meta( $post_id, 'oml_final_audio', $out );
+    update_post_meta( $post_id, 'oml_final_attachment', $attach_id );
+    update_post_meta( $post_id, 'oml_status', 'complete' );
+});
 
-    return rest_ensure_response([
-        'success'       => true,
-        'final_file'    => $out_file,
-        'attachment_id' => $attachment_id,
-    ]);
-}
-
-/**
- * Helper: Call OpenAI
- */
-function oml_call_openai( $body ) {
-    $key = getenv('OPENAI_API_KEY');
+/*
+|--------------------------------------------------------------------------
+| Helpers
+|--------------------------------------------------------------------------
+*/
+function oml_call_openai( array $body ) {
     return oml_call_api(
         'https://api.openai.com/v1/chat/completions',
         'POST',
         [
-            "Authorization"=>"Bearer {$key}",
-            "Content-Type"=>"application/json"
+            'Authorization' => 'Bearer ' . getenv( 'OPENAI_API_KEY' ),
+            'Content-Type'  => 'application/json',
         ],
         $body
     );
 }
 
-/**
- * Generic cURL‐style request via wp_remote_request()
- */
-function oml_call_api( $url, $method='GET', $headers=[], $body=[] ) {
-    $args = ['method'=>$method,'headers'=>$headers];
-    if ( ! empty($body) ) $args['body'] = json_encode($body);
-
-    $res = wp_remote_request($url, $args);
-    if ( is_wp_error($res) || wp_remote_retrieve_response_code($res)!==200 ) {
-        error_log("OML API error: " . (is_wp_error($res) ? $res->get_error_message() : wp_remote_retrieve_response_code($res)));
+function oml_call_api( string $url, string $method='GET', array $headers=[], $body=null ) {
+    $args = [ 'method'=>$method, 'headers'=>$headers ];
+    if ( $body !== null ) {
+        $args['body'] = wp_json_encode( $body );
+    }
+    $res = wp_remote_request( $url, $args );
+    if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
+        error_log( "OML API error: " . ( is_wp_error( $res ) ? $res->get_error_message() : wp_remote_retrieve_response_code( $res ) ) );
         return [];
     }
-    $data = wp_remote_retrieve_body($res);
-    // ElevenLabs returns raw MP3 binary; detect JSON vs binary:
-    $json = json_decode($data, true);
-    return $json ?: $data;
+    $raw = wp_remote_retrieve_body( $res );
+    return json_decode( $raw, true ) ?: $raw;
 }
 
-/**
- * Helper: register audio file in WP Media Library
- */
-function oml_register_media( $file_path, $filename, $mime='audio/mpeg' ) {
-    $wp_filetype = wp_check_filetype($filename, null );
+function oml_register_media( $file_path ) {
+    $filetype = wp_check_filetype( $file_path );
     $attachment = [
-        'guid'           => wp_upload_dir()['url'] . "/{$filename}",
-        'post_mime_type' => $mime,
-        'post_title'     => sanitize_file_name($filename),
-        'post_content'   => '',
-        'post_status'    => 'inherit'
+        'guid'           => wp_upload_dir()['url'] . '/' . basename( $file_path ),
+        'post_mime_type' => $filetype['type'],
+        'post_title'     => sanitize_file_name( basename( $file_path ) ),
+        'post_status'    => 'inherit',
     ];
     $attach_id = wp_insert_attachment( $attachment, $file_path );
-    require_once(ABSPATH . 'wp-admin/includes/image.php');
-    $attach_data = wp_generate_attachment_metadata( $attach_id, $file_path );
-    wp_update_attachment_metadata( $attach_id, $attach_data );
+    require_once ABSPATH . 'wp-admin/includes/image.php';
+    $meta = wp_generate_attachment_metadata( $attach_id, $file_path );
+    wp_update_attachment_metadata( $attach_id, $meta );
     return $attach_id;
 }
